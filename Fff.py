@@ -2,7 +2,9 @@ import streamlit as st
 import cv2
 import mediapipe as mp
 import numpy as np
-from PIL import Image
+
+st.title("🏋️ 실시간 자세 교정 피드백 (웹캠)")
+st.write("웹캠을 켜서 운동 자세를 확인해보세요!")
 
 # Mediapipe pose 초기화
 mp_pose = mp.solutions.pose
@@ -22,43 +24,56 @@ def calculate_angle(a, b, c):
         
     return angle
 
-st.title("🏋️ 자세 교정 피드백 웹앱")
-st.write("사진을 업로드하면 간단한 관절 각도를 분석해 피드백을 드립니다!")
+# 웹캠 실행
+run = st.checkbox("웹캠 켜기")
 
-uploaded_file = st.file_uploader("운동 사진을 업로드하세요", type=["jpg","jpeg","png"])
+FRAME_WINDOW = st.image([])
 
-if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    img = np.array(image)
+if run:
+    cap = cv2.VideoCapture(0)
 
-    # Pose 모델 실행
-    with mp_pose.Pose(static_image_mode=True) as pose:
-        results = pose.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-        
-        if results.pose_landmarks:
-            # 랜드마크 그리기
-            mp_drawing.draw_landmarks(img, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+    with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                st.warning("웹캠을 찾을 수 없습니다.")
+                break
 
-            # 예: 스쿼트 분석 (무릎 각도)
-            landmarks = results.pose_landmarks.landmark
-            hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
-                   landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
-            knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
-                    landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
-            ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
-                     landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
+            # 색상 변환
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = pose.process(image)
 
-            angle = calculate_angle(hip, knee, ankle)
+            # 랜드마크가 감지되면
+            if results.pose_landmarks:
+                mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
 
-            st.image(img, caption="분석된 자세", use_column_width=True)
-            st.write(f"왼쪽 무릎 각도: **{int(angle)}°**")
+                # 스쿼트 예시: 왼쪽 무릎 각도 측정
+                landmarks = results.pose_landmarks.landmark
+                hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
+                       landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
+                knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
+                        landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
+                ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
+                         landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
 
-            # 피드백 조건
-            if angle > 160:
-                st.success("🟢 다리가 곧게 펴져 있어요! (준비 자세)")
-            elif 70 < angle <= 160:
-                st.info("🟡 무릎이 굽혀지고 있어요 (스쿼트 동작 중)")
-            else:
-                st.error("🔴 너무 깊이 앉았어요! 무릎에 무리 갈 수 있음")
-        else:
-            st.warning("사람을 인식하지 못했어요. 다른 사진을 올려주세요.")
+                angle = calculate_angle(hip, knee, ankle)
+
+                # 화면에 각도 표시
+                cv2.putText(image, str(int(angle)),
+                            tuple(np.multiply(knee, [640, 480]).astype(int)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+                # 피드백 조건
+                if angle > 160:
+                    feedback = "🟢 다리가 곧게 펴져 있어요! (준비 자세)"
+                elif 70 < angle <= 160:
+                    feedback = "🟡 무릎이 굽혀지고 있어요 (스쿼트 중)"
+                else:
+                    feedback = "🔴 너무 깊이 앉았어요! 무릎에 무리 갈 수 있음"
+                    
+                cv2.putText(image, feedback, (30, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+            FRAME_WINDOW.image(image)
+
+    cap.release()
